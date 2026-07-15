@@ -3,17 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stream Extractor</title>
+    <title>Stream Extractor (CORS Proxy Version)</title>
     <style>
         body { font-family: Arial, sans-serif; padding: 20px; }
         .result-box { margin-top: 20px; padding: 15px; border: 1px solid #ccc; background: #f9f9f9; }
-        code { display: block; margin-top: 10px; word-wrap: break-word; }
+        code { display: block; margin-top: 10px; word-wrap: break-word; color: #d63384; }
+        button { padding: 10px 15px; cursor: pointer; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
 
     <h2>Stream URL Extractor</h2>
-    <p>Check the developer console (F12) for CORS errors if the fetch fails.</p>
+    <p>This version routes requests through <code>corsproxy.io</code> to bypass browser CORS policies.</p>
     
     <button id="extractBtn">Extract Stream</button>
 
@@ -28,9 +30,11 @@
     <script>
         async function getStream(embedUrl) {
             try {
+                // The public CORS proxy we are using
+                const corsProxy = "https://corsproxy.io/?url=";
+
                 // Step 1: Get HTML and find hash
-                // Note: CORS will likely block this in a browser without a proxy.
-                const htmlResponse = await fetch(embedUrl);
+                const htmlResponse = await fetch(corsProxy + encodeURIComponent(embedUrl));
                 const html = await htmlResponse.text();
                 
                 // Regex to find the 32-character hex hash
@@ -41,9 +45,7 @@
                 const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
                 
                 // Step 2: Hit CDN page to establish session/cookies
-                // fetch automatically includes cookies for same-origin if credentials are set,
-                // but cross-origin cookie setting is strictly regulated by modern browsers.
-                await fetch(cdnVideoUrl);
+                await fetch(corsProxy + encodeURIComponent(cdnVideoUrl));
                 
                 // Step 3: POST to getVideo API
                 const apiUrl = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
@@ -53,16 +55,18 @@
                 formData.append("hash", hash);
                 formData.append("r", "https://animedekho.app/");
 
-                const apiResponse = await fetch(apiUrl, {
+                const apiResponse = await fetch(corsProxy + encodeURIComponent(apiUrl), {
                     method: 'POST',
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                         "X-Requested-With": "XMLHttpRequest"
-                        // Note: Browsers will not let you manually set 'Origin' or 'Referer' headers.
-                        // They are controlled by the browser itself.
                     },
                     body: formData
                 });
+
+                if (!apiResponse.ok) {
+                    throw new Error(`API returned status: ${apiResponse.status}`);
+                }
 
                 const data = await apiResponse.json();
                 
@@ -73,7 +77,8 @@
 
             } catch (error) {
                 console.error("Extraction Error:", error);
-                alert("Failed to extract stream. Check console for CORS or network errors.");
+                alert("Failed to extract stream. Check the developer console for details.");
+                return null;
             }
         }
 
@@ -81,12 +86,12 @@
         document.getElementById("extractBtn").addEventListener("click", async () => {
             const btn = document.getElementById("extractBtn");
             btn.disabled = true;
-            btn.textContent = "Extracting...";
+            btn.textContent = "Extracting (Please wait)...";
 
             const embedUrl = "https://animedekho.app/embed/31910/1-26";
             const result = await getStream(embedUrl);
 
-            if (result) {
+            if (result && result.stream_url) {
                 document.getElementById("cdnPage").textContent = result.cdn_video_page;
                 document.getElementById("streamUrl").textContent = result.stream_url;
                 document.getElementById("resultBox").style.display = "block";
