@@ -18,7 +18,7 @@
 <body>
 
     <h2>Stream URL Extractor</h2>
-    <p>Extracts stream links using CorsProxy.io.</p>
+    <p>Extracts stream links automatically from URL parameters.</p>
     
     <div class="input-group">
         <label for="tmdbId">TMDB ID:</label>
@@ -41,26 +41,7 @@
     </div>
 
     <script>
-        // 1. Automatically parse the URL to find ID and Episode when the page loads
-        function parseUrlForParams() {
-            // This regex looks for /numbers/numbers-numbers at the end of the URL path
-            // e.g., /animedekohtml/31910/1-26 -> matches 31910 and 1-26
-            const match = window.location.pathname.match(/\/(\d+)\/(\d+-\d+)\/?$/);
-            
-            if (match) {
-                document.getElementById("tmdbId").value = match[1];
-                document.getElementById("episodeStr").value = match[2];
-            } else {
-                // Fallback defaults if URL doesn't match the pattern
-                document.getElementById("tmdbId").value = "31910";
-                document.getElementById("episodeStr").value = "1-26";
-            }
-        }
-
-        // Run the parser on load
-        parseUrlForParams();
-
-        // 2. The Extraction Logic
+        // 1. The Extraction Logic fetching the stream data
         async function getStream(embedUrl) {
             try {
                 const corsProxy = "https://corsproxy.io/?url=";
@@ -112,23 +93,13 @@
             }
         }
 
-        // 3. Attach event listener to button
-        document.getElementById("extractBtn").addEventListener("click", async () => {
+        // 2. The UI update and extraction sequence
+        async function performExtraction(tmdbId, episodeStr) {
             const btn = document.getElementById("extractBtn");
-            const tmdbId = document.getElementById("tmdbId").value.trim();
-            const episodeStr = document.getElementById("episodeStr").value.trim();
-
-            if (!tmdbId || !episodeStr) {
-                alert("Please ensure TMDB ID and Season-Episode are filled out.");
-                return;
-            }
-
-            // Construct the dynamic URL based on the inputs
-            const dynamicEmbedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
-
             btn.disabled = true;
             btn.textContent = "Extracting (Please wait)...";
 
+            const dynamicEmbedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
             const result = await getStream(dynamicEmbedUrl);
 
             if (result && result.stream_url) {
@@ -141,7 +112,48 @@
 
             btn.disabled = false;
             btn.textContent = "Extract Stream";
+        }
+
+        // 3. Automatically parse the URL and run extraction on load
+        function init() {
+            // Look for /numbers/numbers-numbers in the standard path OR in the hash (for GitHub Pages compatibility)
+            const pathMatch = window.location.pathname.match(/\/(\d+)\/(\d+-\d+)\/?$/);
+            const hashMatch = window.location.hash.match(/\/(\d+)\/(\d+-\d+)\/?$/);
+            
+            const match = pathMatch || hashMatch;
+            
+            if (match) {
+                const tmdbId = match[1];
+                const episodeStr = match[2];
+                
+                // Set the input fields
+                document.getElementById("tmdbId").value = tmdbId;
+                document.getElementById("episodeStr").value = episodeStr;
+
+                // AUTOMATICALLY trigger the extraction
+                performExtraction(tmdbId, episodeStr);
+            } else {
+                // Fallback defaults if URL doesn't match the pattern
+                document.getElementById("tmdbId").value = "31910";
+                document.getElementById("episodeStr").value = "1-26";
+            }
+        }
+
+        // 4. Attach event listener to button for manual clicks
+        document.getElementById("extractBtn").addEventListener("click", () => {
+            const tmdbId = document.getElementById("tmdbId").value.trim();
+            const episodeStr = document.getElementById("episodeStr").value.trim();
+
+            if (!tmdbId || !episodeStr) {
+                alert("Please ensure TMDB ID and Season-Episode are filled out.");
+                return;
+            }
+
+            performExtraction(tmdbId, episodeStr);
         });
+
+        // Run initialization on page load
+        init();
     </script>
 </body>
 </html>
