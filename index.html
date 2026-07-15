@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Extractor</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .result-box { margin-top: 20px; padding: 15px; border: 1px solid #ccc; background: #f9f9f9; }
+        code { display: block; margin-top: 10px; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+
+    <h2>Stream URL Extractor</h2>
+    <p>Check the developer console (F12) for CORS errors if the fetch fails.</p>
+    
+    <button id="extractBtn">Extract Stream</button>
+
+    <div class="result-box" id="resultBox" style="display: none;">
+        <strong>CDN Video Page:</strong>
+        <code id="cdnPage"></code>
+        <br>
+        <strong>Stream URL:</strong>
+        <code id="streamUrl"></code>
+    </div>
+
+    <script>
+        async function getStream(embedUrl) {
+            try {
+                // Step 1: Get HTML and find hash
+                // Note: CORS will likely block this in a browser without a proxy.
+                const htmlResponse = await fetch(embedUrl);
+                const html = await htmlResponse.text();
+                
+                // Regex to find the 32-character hex hash
+                const hashMatch = html.match(/\/video\/([a-f0-9]{32})/);
+                if (!hashMatch) throw new Error("Hash not found in the HTML source.");
+                
+                const hash = hashMatch[1];
+                const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
+                
+                // Step 2: Hit CDN page to establish session/cookies
+                // fetch automatically includes cookies for same-origin if credentials are set,
+                // but cross-origin cookie setting is strictly regulated by modern browsers.
+                await fetch(cdnVideoUrl);
+                
+                // Step 3: POST to getVideo API
+                const apiUrl = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
+                
+                // Prepare form-urlencoded data
+                const formData = new URLSearchParams();
+                formData.append("hash", hash);
+                formData.append("r", "https://animedekho.app/");
+
+                const apiResponse = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "X-Requested-With": "XMLHttpRequest"
+                        // Note: Browsers will not let you manually set 'Origin' or 'Referer' headers.
+                        // They are controlled by the browser itself.
+                    },
+                    body: formData
+                });
+
+                const data = await apiResponse.json();
+                
+                return {
+                    cdn_video_page: cdnVideoUrl,
+                    stream_url: data.videoSource
+                };
+
+            } catch (error) {
+                console.error("Extraction Error:", error);
+                alert("Failed to extract stream. Check console for CORS or network errors.");
+            }
+        }
+
+        // Attach event listener to button
+        document.getElementById("extractBtn").addEventListener("click", async () => {
+            const btn = document.getElementById("extractBtn");
+            btn.disabled = true;
+            btn.textContent = "Extracting...";
+
+            const embedUrl = "https://animedekho.app/embed/31910/1-26";
+            const result = await getStream(embedUrl);
+
+            if (result) {
+                document.getElementById("cdnPage").textContent = result.cdn_video_page;
+                document.getElementById("streamUrl").textContent = result.stream_url;
+                document.getElementById("resultBox").style.display = "block";
+            }
+
+            btn.disabled = false;
+            btn.textContent = "Extract Stream";
+        });
+    </script>
+</body>
+</html>
