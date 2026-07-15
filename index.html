@@ -5,7 +5,7 @@
     <title>Stream Extractor</title>
 </head>
 <body>
-<pre id="output">Loading...</pre>
+<pre id="output">Extracting...</pre>
 <script>
 async function getStream(embedUrl) {
     const corsProxy = "https://corsproxy.io/?url=";
@@ -52,21 +52,42 @@ async function getStream(embedUrl) {
 async function init() {
     const out = document.getElementById("output");
 
-    // Parse TMDB ID and episode from URL path or hash
-    // Supports: /animedekohtml/31910/1-28 or /#/31910/1-28
-    const fullPath = window.location.pathname + window.location.hash;
-    const match = fullPath.match(/\/(\d+)\/([\d]+-[\d]+)/);
+    // Method 1: query params  ?id=31910&ep=1-25
+    const params = new URLSearchParams(window.location.search);
+    let tmdbId = params.get("id");
+    let episodeStr = params.get("ep");
 
-    if (!match) {
+    // Method 2: hash  #/31910/1-25
+    if (!tmdbId || !episodeStr) {
+        const hashMatch = window.location.hash.match(/\/?(\d+)\/([\d]+-[\d]+)/);
+        if (hashMatch) {
+            tmdbId = hashMatch[1];
+            episodeStr = hashMatch[2];
+        }
+    }
+
+    // Method 3: GitHub Pages 404 redirect stores original path in sessionStorage
+    if (!tmdbId || !episodeStr) {
+        const redirected = sessionStorage.getItem("gh_redirect");
+        if (redirected) {
+            sessionStorage.removeItem("gh_redirect");
+            const m = redirected.match(/\/(\d+)\/([\d]+-[\d]+)/);
+            if (m) { tmdbId = m[1]; episodeStr = m[2]; }
+        }
+    }
+
+    if (!tmdbId || !episodeStr) {
         out.textContent = JSON.stringify({
-            error: "Invalid URL format. Use: /animedekohtml/{tmdb_id}/{season}-{episode}",
-            example: "https://donkarboy.github.io/animedekohtml/31910/1-28"
+            error: "No TMDB ID or episode found. Use one of these URL formats:",
+            formats: {
+                query_params: "https://donkarboy.github.io/animedekohtml/?id=31910&ep=1-25",
+                hash: "https://donkarboy.github.io/animedekohtml/#/31910/1-25",
+                path_via_404: "https://donkarboy.github.io/animedekohtml/31910/1-25"
+            }
         }, null, 2);
         return;
     }
 
-    const tmdbId = match[1];
-    const episodeStr = match[2];
     const embedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
 
     try {
