@@ -101,8 +101,8 @@
 
     async function getHash(embedUrl) {
         const proxies = [
-            u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
             u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+            u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
         ];
 
         for (let i = 0; i < proxies.length; i++) {
