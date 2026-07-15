@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #000;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+
+        #player-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: none;
+        }
+
+        #loader {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            gap: 20px;
+            z-index: 10;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #333;
+            border-top-color: #e74c3c;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #loader p {
+            color: #aaa;
+            font-size: 14px;
+            letter-spacing: 0.05em;
+        }
+
+        #error-box {
+            position: fixed;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #0d0d0d;
+            gap: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+
+        #error-box h2 {
+            color: #e74c3c;
+            font-size: 18px;
+        }
+
+        #error-box p {
+            color: #888;
+            font-size: 13px;
+            max-width: 420px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loader">
+        <div class="spinner"></div>
+        <p>Loading player…</p>
+    </div>
+
+    <div id="error-box">
+        <h2>Playback Error</h2>
+        <p id="error-msg">Could not load the video. Please check your URL parameters and try again.</p>
+    </div>
+
+    <iframe
+        id="player-frame"
+        allowfullscreen
+        allow="autoplay; fullscreen; encrypted-media"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+    ></iframe>
+
+    <script>
+        const loader   = document.getElementById("loader");
+        const frame    = document.getElementById("player-frame");
+        const errorBox = document.getElementById("error-box");
+        const errorMsg = document.getElementById("error-msg");
+
+        function showError(msg) {
+            loader.style.display  = "none";
+            errorBox.style.display = "flex";
+            if (msg) errorMsg.textContent = msg;
+        }
+
+        async function getStream(embedUrl) {
+            const proxy = "https://corsproxy.io/?url=";
+
+            const htmlRes  = await fetch(proxy + encodeURIComponent(embedUrl));
+            const html     = await htmlRes.text();
+            const hashMatch = html.match(/\/video\/([a-f0-9]{32})/);
+            if (!hashMatch) throw new Error("Stream hash not found.");
+
+            const hash        = hashMatch[1];
+            const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
+
+            // warm up the CDN page (keep original behaviour)
+            await fetch(proxy + encodeURIComponent(cdnVideoUrl));
+
+            const apiUrl  = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
+            const body    = new URLSearchParams({ hash, r: "https://animedekho.app/" });
+
+            const apiRes  = await fetch(proxy + encodeURIComponent(apiUrl), {
+                method : "POST",
+                headers: {
+                    "Content-Type"     : "application/x-www-form-urlencoded; charset=UTF-8",
+                    "X-Requested-With" : "XMLHttpRequest"
+                },
+                body
+            });
+
+            if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`);
+            const data = await apiRes.json();
+
+            return { cdnVideoUrl, videoSource: data.videoSource };
+        }
+
+        async function init() {
+            // ── resolve TMDB ID + episode ─────────────────────────────────────
+            const params    = new URLSearchParams(window.location.search);
+            let tmdbId      = params.get("id");
+            let episodeStr  = params.get("ep");
+
+            if (!tmdbId || !episodeStr) {
+                const hm = window.location.hash.match(/\/?(\d+)\/([\d]+-[\d]+)/);
+                if (hm) { tmdbId = hm[1]; episodeStr = hm[2]; }
+            }
+
+            if (!tmdbId || !episodeStr) {
+                const redirected = sessionStorage.getItem("gh_redirect");
+                if (redirected) {
+                    sessionStorage.removeItem("gh_redirect");
+                    const m = redirected.match(/\/(\d+)\/([\d]+-[\d]+)/);
+                    if (m) { tmdbId = m[1]; episodeStr = m[2]; }
+                }
+            }
+
+            if (!tmdbId || !episodeStr) {
+                showError(
+                    "No TMDB ID or episode found.\n" +
+                    "Use: ?id=31910&ep=1-25  or  #/31910/1-25"
+                );
+                return;
+            }
+
+            // ── fetch stream and play ─────────────────────────────────────────
+            const embedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
+            try {
+                const { cdnVideoUrl } = await getStream(embedUrl);
+
+                // Load the CDN video page inside the iframe — it has its own player
+                frame.src = cdnVideoUrl;
+                frame.onload = () => {
+                    loader.style.display = "none";
+                    frame.style.display  = "block";
+                };
+            } catch (err) {
+                showError(err.message);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
