@@ -7,7 +7,10 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #000; width: 100vw; height: 100vh; overflow: hidden; font-family: sans-serif; }
-        #player-frame { width: 100%; height: 100%; border: none; display: none; }
+        #player-frame {
+            width: 100%; height: 100%; border: none;
+            display: none; position: fixed; inset: 0;
+        }
         #loader {
             position: fixed; inset: 0; display: flex; flex-direction: column;
             align-items: center; justify-content: center; background: #000; gap: 20px; z-index: 10;
@@ -30,6 +33,7 @@
     </style>
 </head>
 <body>
+
     <div id="loader">
         <div class="spinner"></div>
         <p>Loading player…</p>
@@ -42,17 +46,11 @@
         <p id="error-detail" style="font-size:11px;color:#555;margin-top:8px;"></p>
     </div>
 
-    <iframe
-        id="player-frame"
-        allowfullscreen
-        allow="autoplay; fullscreen; encrypted-media"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-    ></iframe>
+    <!-- iframe is injected after hash is resolved -->
 
     <script>
     const loader   = document.getElementById("loader");
     const statusEl = document.getElementById("status");
-    const frame    = document.getElementById("player-frame");
     const errorBox = document.getElementById("error-box");
     const errorMsg = document.getElementById("error-msg");
     const errorDet = document.getElementById("error-detail");
@@ -82,49 +80,44 @@
         return null;
     }
 
-    async function getStream(embedUrl) {
-        // 1. Fetch embed page via proxy (needed for cross-origin HTML scraping)
-        log("Fetching embed page…");
-        const proxy = "https://api.allorigins.win/raw?url=";
-        const htmlRes = await fetch(proxy + encodeURIComponent(embedUrl), {
-            headers: { "Referer": "https://animedekho.app/" }
-        });
-        const html = await htmlRes.text();
+    function playHash(hash) {
+        const cdnUrl = `https://as-cdn21.top/video/${hash}`;
+        log("Launching player…");
 
-        // 2. Extract hash
-        const hash = extractHash(html);
-        if (!hash) throw new Error("Stream hash not found in embed page.");
-        log("Hash found: " + hash);
+        const iframe = document.createElement("iframe");
+        iframe.src              = cdnUrl;
+        iframe.width            = "100%";
+        iframe.height           = "100%";
+        iframe.frameBorder      = "0";
+        iframe.allowFullscreen  = true;
+        iframe.referrerPolicy   = "no-referrer";
+        iframe.sandbox          = "allow-scripts allow-same-origin allow-presentation";
+        iframe.allow            = "fullscreen; encrypted-media; picture-in-picture; autoplay";
+        iframe.style.cssText    = "position:fixed;inset:0;width:100%;height:100%;border:none;display:block;";
 
-        // 3. Call the video API directly (no proxy) — same origin rules don't apply
-        //    because as-cdn21.top serves CORS headers for XHR requests
-        const apiUrl = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
-        const body   = new URLSearchParams({ hash, r: "https://animedekho.app/" });
+        iframe.onload = () => { loader.style.display = "none"; };
+        document.body.appendChild(iframe);
+    }
 
-        log("Fetching video source…");
-        const apiRes = await fetch(apiUrl, {
-            method : "POST",
-            headers: {
-                "Content-Type"     : "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With" : "XMLHttpRequest",
-                "Referer"          : "https://animedekho.app/"
-            },
-            body
-        });
+    async function getHash(embedUrl) {
+        const proxies = [
+            u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+            u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+        ];
 
-        if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`);
-        const text = await apiRes.text();
-
-        let data;
-        try { data = JSON.parse(text); }
-        catch (e) { throw new Error("API returned non-JSON: " + text.slice(0, 200)); }
-
-        const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
-        return { cdnVideoUrl, videoSource: data.videoSource || null };
+        for (let i = 0; i < proxies.length; i++) {
+            try {
+                log(`Fetching via proxy ${i + 1}…`);
+                const res  = await fetch(proxies[i](embedUrl));
+                const html = await res.text();
+                const hash = extractHash(html);
+                if (hash) return hash;
+            } catch (_) {}
+        }
+        throw new Error("Could not extract stream hash from embed page.");
     }
 
     async function init() {
-        // Resolve TMDB ID + episode from URL
         const params   = new URLSearchParams(window.location.search);
         let tmdbId     = params.get("id");
         let episodeStr = params.get("ep");
@@ -151,25 +144,9 @@
         const embedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
 
         try {
-            const { cdnVideoUrl, videoSource } = await getStream(embedUrl);
-            log("Starting playback…");
-
-            // If we got a direct stream URL (m3u8/mp4), use native video element in iframe
-            if (videoSource && /\.(m3u8|mp4|webm)/i.test(videoSource)) {
-                const playerHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<style>*{margin:0;padding:0}body{background:#000}video{width:100vw;height:100vh;display:block}</style>
-</head><body><video src="${videoSource}" autoplay controls playsinline></video></body></html>`;
-                frame.src = URL.createObjectURL(new Blob([playerHTML], { type: "text/html" }));
-            } else {
-                // Fall back to loading the CDN video page directly — no proxy needed
-                frame.src = cdnVideoUrl;
-            }
-
-            frame.onload = () => {
-                loader.style.display = "none";
-                frame.style.display  = "block";
-            };
-
+            const hash = await getHash(embedUrl);
+            log("Hash: " + hash);
+            playHash(hash);
         } catch (err) {
             showError(err.message);
         }
