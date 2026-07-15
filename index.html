@@ -3,20 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stream Extractor (CORS Proxy Version)</title>
+    <title>Stream Extractor (Dynamic URL)</title>
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
         .result-box { margin-top: 20px; padding: 15px; border: 1px solid #ccc; background: #f9f9f9; }
         code { display: block; margin-top: 10px; word-wrap: break-word; color: #d63384; }
-        button { padding: 10px 15px; cursor: pointer; }
+        button { padding: 10px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
         button:disabled { background: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
 
     <h2>Stream URL Extractor</h2>
-    <p>This version routes requests through <code>corsproxy.io</code> to bypass browser CORS policies.</p>
+    <p>Extracts stream links using CorsProxy.io.</p>
     
+    <div class="input-group">
+        <label for="tmdbId">TMDB ID:</label>
+        <input type="text" id="tmdbId" placeholder="e.g., 31910">
+    </div>
+
+    <div class="input-group">
+        <label for="episodeStr">Season-Episode:</label>
+        <input type="text" id="episodeStr" placeholder="e.g., 1-26">
+    </div>
+
     <button id="extractBtn">Extract Stream</button>
 
     <div class="result-box" id="resultBox" style="display: none;">
@@ -28,29 +41,46 @@
     </div>
 
     <script>
+        // 1. Automatically parse the URL to find ID and Episode when the page loads
+        function parseUrlForParams() {
+            // This regex looks for /numbers/numbers-numbers at the end of the URL path
+            // e.g., /animedekohtml/31910/1-26 -> matches 31910 and 1-26
+            const match = window.location.pathname.match(/\/(\d+)\/(\d+-\d+)\/?$/);
+            
+            if (match) {
+                document.getElementById("tmdbId").value = match[1];
+                document.getElementById("episodeStr").value = match[2];
+            } else {
+                // Fallback defaults if URL doesn't match the pattern
+                document.getElementById("tmdbId").value = "31910";
+                document.getElementById("episodeStr").value = "1-26";
+            }
+        }
+
+        // Run the parser on load
+        parseUrlForParams();
+
+        // 2. The Extraction Logic
         async function getStream(embedUrl) {
             try {
-                // The public CORS proxy we are using
                 const corsProxy = "https://corsproxy.io/?url=";
 
                 // Step 1: Get HTML and find hash
                 const htmlResponse = await fetch(corsProxy + encodeURIComponent(embedUrl));
                 const html = await htmlResponse.text();
                 
-                // Regex to find the 32-character hex hash
                 const hashMatch = html.match(/\/video\/([a-f0-9]{32})/);
                 if (!hashMatch) throw new Error("Hash not found in the HTML source.");
                 
                 const hash = hashMatch[1];
                 const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
                 
-                // Step 2: Hit CDN page to establish session/cookies
+                // Step 2: Hit CDN page
                 await fetch(corsProxy + encodeURIComponent(cdnVideoUrl));
                 
                 // Step 3: POST to getVideo API
                 const apiUrl = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
                 
-                // Prepare form-urlencoded data
                 const formData = new URLSearchParams();
                 formData.append("hash", hash);
                 formData.append("r", "https://animedekho.app/");
@@ -82,19 +112,31 @@
             }
         }
 
-        // Attach event listener to button
+        // 3. Attach event listener to button
         document.getElementById("extractBtn").addEventListener("click", async () => {
             const btn = document.getElementById("extractBtn");
+            const tmdbId = document.getElementById("tmdbId").value.trim();
+            const episodeStr = document.getElementById("episodeStr").value.trim();
+
+            if (!tmdbId || !episodeStr) {
+                alert("Please ensure TMDB ID and Season-Episode are filled out.");
+                return;
+            }
+
+            // Construct the dynamic URL based on the inputs
+            const dynamicEmbedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
+
             btn.disabled = true;
             btn.textContent = "Extracting (Please wait)...";
 
-            const embedUrl = "https://animedekho.app/embed/31910/1-26";
-            const result = await getStream(embedUrl);
+            const result = await getStream(dynamicEmbedUrl);
 
             if (result && result.stream_url) {
                 document.getElementById("cdnPage").textContent = result.cdn_video_page;
                 document.getElementById("streamUrl").textContent = result.stream_url;
                 document.getElementById("resultBox").style.display = "block";
+            } else {
+                document.getElementById("resultBox").style.display = "none";
             }
 
             btn.disabled = false;
