@@ -27,11 +27,6 @@
         }
         #error-box h2 { color: #e74c3c; font-size: 18px; }
         #error-box p { color: #888; font-size: 13px; max-width: 500px; line-height: 1.6; word-break: break-all; }
-        #debug-dump {
-            display: none; position: fixed; inset: 0; overflow: auto;
-            background: #111; color: #0f0; font-size: 11px; font-family: monospace;
-            padding: 16px; white-space: pre-wrap; word-break: break-all; z-index: 99;
-        }
     </style>
 </head>
 <body>
@@ -47,9 +42,6 @@
         <p id="error-detail" style="font-size:11px;color:#555;margin-top:8px;"></p>
     </div>
 
-    <!-- debug overlay – toggled with ?debug=1 -->
-    <pre id="debug-dump"></pre>
-
     <iframe
         id="player-frame"
         allowfullscreen
@@ -58,109 +50,59 @@
     ></iframe>
 
     <script>
-    const loader    = document.getElementById("loader");
-    const statusEl  = document.getElementById("status");
-    const frame     = document.getElementById("player-frame");
-    const errorBox  = document.getElementById("error-box");
-    const errorMsg  = document.getElementById("error-msg");
-    const errorDet  = document.getElementById("error-detail");
-    const debugDump = document.getElementById("debug-dump");
+    const loader   = document.getElementById("loader");
+    const statusEl = document.getElementById("status");
+    const frame    = document.getElementById("player-frame");
+    const errorBox = document.getElementById("error-box");
+    const errorMsg = document.getElementById("error-msg");
+    const errorDet = document.getElementById("error-detail");
 
-    const DEBUG = new URLSearchParams(window.location.search).get("debug") === "1";
-
-    function log(msg) {
-        statusEl.textContent = msg;
-        if (DEBUG) debugDump.textContent += msg + "\n";
-    }
+    function log(msg) { statusEl.textContent = msg; }
 
     function showError(msg, detail = "") {
         loader.style.display   = "none";
         errorBox.style.display = "flex";
         errorMsg.textContent   = msg;
         if (detail) errorDet.textContent = detail;
-        if (DEBUG) { debugDump.style.display = "block"; }
     }
 
-    // ── proxy list – tried in order until one works ───────────────────────────
-    const PROXIES = [
-        url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-        url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-        url => `https://cors-anywhere.herokuapp.com/${url}`,
-    ];
-
-    async function proxyFetch(url, options = {}, proxyIndex = 0) {
-        if (proxyIndex >= PROXIES.length) throw new Error("All proxies failed for: " + url);
-        const proxied = PROXIES[proxyIndex](url);
-        log(`Proxy ${proxyIndex + 1}: ${url.slice(0, 60)}…`);
-        try {
-            const res = await fetch(proxied, options);
-            if (!res.ok && res.status !== 0) throw new Error(`HTTP ${res.status}`);
-            return res;
-        } catch (e) {
-            log(`Proxy ${proxyIndex + 1} failed (${e.message}), trying next…`);
-            return proxyFetch(url, options, proxyIndex + 1);
-        }
-    }
-
-    // ── extract 32-char hex hash from HTML using many patterns ───────────────
     function extractHash(html) {
-        if (DEBUG) {
-            debugDump.style.display = "block";
-            debugDump.textContent += "\n--- HTML SNIPPET (first 3000 chars) ---\n" + html.slice(0, 3000) + "\n---\n";
-        }
-
         const patterns = [
-            /\/video\/([a-f0-9]{32})/i,              // /video/<hash>
-            /data[=:\s'"]+([a-f0-9]{32})/i,          // data=<hash> or data: '<hash>'
-            /hash[=:\s'"]+([a-f0-9]{32})/i,          // hash=<hash>
-            /['"]([a-f0-9]{32})['"]/,                 // any quoted 32-char hex string
-            /src=['"][^'"]*\/([a-f0-9]{32})[^'"]*['"]/, // src=".../<hash>..."
-            /\b([a-f0-9]{32})\b/,                     // bare 32-char hex anywhere
+            /\/video\/([a-f0-9]{32})/i,
+            /data[=:\s'"]+([a-f0-9]{32})/i,
+            /hash[=:\s'"]+([a-f0-9]{32})/i,
+            /['"]([a-f0-9]{32})['"]/,
+            /src=['"][^'"]*\/([a-f0-9]{32})[^'"]*['"]/,
+            /\b([a-f0-9]{32})\b/,
         ];
-
         for (const re of patterns) {
             const m = html.match(re);
-            if (m) {
-                log(`Hash found via pattern: ${re}`);
-                if (DEBUG) debugDump.textContent += `Matched pattern: ${re}\nHash: ${m[1]}\n`;
-                return m[1];
-            }
+            if (m) return m[1];
         }
         return null;
     }
 
     async function getStream(embedUrl) {
-        // 1. fetch embed page HTML
+        // 1. Fetch embed page via proxy (needed for cross-origin HTML scraping)
         log("Fetching embed page…");
-        const htmlRes = await proxyFetch(embedUrl, {
+        const proxy = "https://api.allorigins.win/raw?url=";
+        const htmlRes = await fetch(proxy + encodeURIComponent(embedUrl), {
             headers: { "Referer": "https://animedekho.app/" }
         });
         const html = await htmlRes.text();
 
-        // 2. extract hash
+        // 2. Extract hash
         const hash = extractHash(html);
-        if (!hash) {
-            if (DEBUG) debugDump.textContent += "\n--- FULL HTML ---\n" + html + "\n";
-            throw new Error("Stream hash not found in embed page.");
-        }
+        if (!hash) throw new Error("Stream hash not found in embed page.");
+        log("Hash found: " + hash);
 
-        const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
-        log("Hash: " + hash);
+        // 3. Call the video API directly (no proxy) — same origin rules don't apply
+        //    because as-cdn21.top serves CORS headers for XHR requests
+        const apiUrl = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
+        const body   = new URLSearchParams({ hash, r: "https://animedekho.app/" });
 
-        // 3. warm-up CDN page (non-fatal if it fails)
-        try {
-            log("Warming up CDN…");
-            await proxyFetch(cdnVideoUrl, {
-                headers: { "Referer": "https://animedekho.app/" }
-            });
-        } catch (_) {}
-
-        // 4. call getVideo API
-        log("Calling video API…");
-        const apiUrl  = `https://as-cdn21.top/player/index.php?data=${hash}&do=getVideo`;
-        const body    = new URLSearchParams({ hash, r: "https://animedekho.app/" });
-
-        const apiRes  = await proxyFetch(apiUrl, {
+        log("Fetching video source…");
+        const apiRes = await fetch(apiUrl, {
             method : "POST",
             headers: {
                 "Content-Type"     : "application/x-www-form-urlencoded; charset=UTF-8",
@@ -170,22 +112,19 @@
             body
         });
 
+        if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`);
         const text = await apiRes.text();
-        if (DEBUG) debugDump.textContent += "\nAPI raw response:\n" + text + "\n";
 
         let data;
         try { data = JSON.parse(text); }
         catch (e) { throw new Error("API returned non-JSON: " + text.slice(0, 200)); }
 
-        if (!data.videoSource) throw new Error("No videoSource in API response.");
-
-        return { cdnVideoUrl, videoSource: data.videoSource };
+        const cdnVideoUrl = `https://as-cdn21.top/video/${hash}`;
+        return { cdnVideoUrl, videoSource: data.videoSource || null };
     }
 
     async function init() {
-        if (DEBUG) { debugDump.style.display = "block"; }
-
-        // ── resolve params ────────────────────────────────────────────────────
+        // Resolve TMDB ID + episode from URL
         const params   = new URLSearchParams(window.location.search);
         let tmdbId     = params.get("id");
         let episodeStr = params.get("ep");
@@ -205,31 +144,24 @@
         }
 
         if (!tmdbId || !episodeStr) {
-            showError(
-                "No TMDB ID or episode found.",
-                "Use ?id=31910&ep=1-25  or  #/31910/1-25  or  add ?debug=1 for details."
-            );
+            showError("No TMDB ID or episode found.", "Use ?id=31910&ep=1-25 or #/31910/1-25");
             return;
         }
 
         const embedUrl = `https://animedekho.app/embed/${tmdbId}/${episodeStr}`;
-        if (DEBUG) debugDump.textContent += "Embed URL: " + embedUrl + "\n";
 
         try {
             const { cdnVideoUrl, videoSource } = await getStream(embedUrl);
-            log("Playing…");
+            log("Starting playback…");
 
-            // Prefer direct m3u8/mp4 via HTML5 video; fall back to iframe of CDN page
-            if (videoSource && /\.(m3u8|mp4|webm)/.test(videoSource)) {
-                // build a tiny self-contained player page as a blob and load in iframe
+            // If we got a direct stream URL (m3u8/mp4), use native video element in iframe
+            if (videoSource && /\.(m3u8|mp4|webm)/i.test(videoSource)) {
                 const playerHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<style>*{margin:0;padding:0}body{background:#000}
-video{width:100vw;height:100vh;display:block}</style></head><body>
-<video src="${videoSource}" autoplay controls playsinline></video>
-</body></html>`;
+<style>*{margin:0;padding:0}body{background:#000}video{width:100vw;height:100vh;display:block}</style>
+</head><body><video src="${videoSource}" autoplay controls playsinline></video></body></html>`;
                 frame.src = URL.createObjectURL(new Blob([playerHTML], { type: "text/html" }));
             } else {
-                // load the CDN video page (has its own embedded player)
+                // Fall back to loading the CDN video page directly — no proxy needed
                 frame.src = cdnVideoUrl;
             }
 
@@ -239,8 +171,7 @@ video{width:100vw;height:100vh;display:block}</style></head><body>
             };
 
         } catch (err) {
-            showError(err.message, DEBUG ? "" : "Add ?debug=1 to the URL to see details.");
-            if (DEBUG) debugDump.textContent += "\nERROR: " + err.message + "\n" + (err.stack || "");
+            showError(err.message);
         }
     }
 
